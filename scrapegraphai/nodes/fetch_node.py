@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from ..docloaders import ChromiumLoader
-from ..utils.cleanup_html import cleanup_html
+from ..utils.cleanup_html import cleanup_html, clean_html_for_script_creator
 from ..utils.convert_to_md import convert_to_md
 from .base_node import BaseNode
 
@@ -255,6 +255,9 @@ class FetchNode(BaseNode):
         else:
             parsed_content = source
 
+        if self.script_creator:
+            parsed_content = clean_html_for_script_creator(parsed_content)
+
         compressed_document = [
             Document(page_content=parsed_content, metadata={"source": "local_dir"})
         ]
@@ -396,6 +399,9 @@ class FetchNode(BaseNode):
                 and not self.openai_md_enabled
             ):
                 parsed_content = convert_to_md(document[0].page_content, parsed_content)
+
+            if self.script_creator:
+                parsed_content = clean_html_for_script_creator(parsed_content)
 
             compressed_document = [
                 Document(page_content=parsed_content, metadata={"source": "html file"})

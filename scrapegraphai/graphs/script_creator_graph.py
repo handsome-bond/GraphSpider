@@ -64,12 +64,19 @@ class ScriptCreatorGraph(AbstractGraph):
             BaseGraph: A graph instance representing the web scraping workflow.
         """
 
+        # Merge user-provided loader_kwargs with top-level config params that
+        # ChromiumLoader understands (delay, timeout, etc.).
+        loader_kwargs = dict(self.config.get("loader_kwargs", {}))
+        for key in ("delay", "timeout", "requires_js_support", "load_state"):
+            if key in self.config and key not in loader_kwargs:
+                loader_kwargs[key] = self.config[key]
+
         fetch_node = FetchNode(
             input="url | local_dir",
             output=["doc"],
             node_config={
                 "llm_model": self.llm_model,
-                "loader_kwargs": self.config.get("loader_kwargs", {}),
+                "loader_kwargs": loader_kwargs,
                 "script_creator": True,
                 "storage_state": self.config.get("storage_state"),
             },
@@ -92,6 +99,7 @@ class ScriptCreatorGraph(AbstractGraph):
                 "llm_model": self.llm_model,
                 "additional_info": self.config.get("additional_info"),
                 "schema": self.schema,
+                "model_token": self.model_token,
             },
             library=self.library,
             website=self.source,
@@ -118,6 +126,15 @@ class ScriptCreatorGraph(AbstractGraph):
         Returns:
             str: The answer to the prompt.
         """
+
+        # Ensure the GenerateScraperNode has the correct source URL.
+        # When created via GraphIteratorNode the graph is instantiated with
+        # source="" and _create_graph() binds website="" on the node — then
+        # graph.source is updated afterwards.  Push the real URL into the node
+        # before execution so the prompt template and URL correction both work.
+        for node in self.graph.nodes:
+            if isinstance(node, GenerateScraperNode):
+                node.source = self.source
 
         inputs = {"user_prompt": self.prompt, self.input_key: self.source}
         self.final_state, self.execution_info = self.graph.execute(inputs)

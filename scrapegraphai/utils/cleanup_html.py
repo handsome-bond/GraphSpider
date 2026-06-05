@@ -121,6 +121,103 @@ def minify_html(html):
     return html.strip()
 
 
+def clean_html_for_script_creator(html_content: str) -> str:
+    """
+    Aggressively clean HTML while preserving CSS-selector-relevant structure.
+    Designed for the script_creator pipeline where the LLM needs to see HTML
+    to write scraping scripts but raw HTML wastes tokens on noise.
+
+    Removes: <script>, <style>, <noscript>, <svg>, <canvas>, <iframe>,
+    <head>, comments, and non-essential attributes.
+    Keeps: class, id, data-*, href, src, type, name, role, aria-*,
+    placeholder, alt, title, value.
+
+    Args:
+        html_content (str): Raw HTML content.
+
+    Returns:
+        str: Cleaned, minified HTML with only body content and essential attributes.
+    """
+    from bs4 import BeautifulSoup, Comment
+
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    # Remove comments
+    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+        comment.extract()
+
+    # Remove noisy tags entirely
+    for tag_name in ("script", "style", "noscript", "svg", "canvas", "iframe", "meta", "link", "br", "hr"):
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
+
+    # Remove hidden elements (display:none / visibility:hidden / aria-hidden)
+    for tag in soup.find_all(style=True):
+        style_val = tag["style"].lower()
+        if "display:none" in style_val or "display: none" in style_val:
+            tag.decompose()
+            continue
+        if "visibility:hidden" in style_val or "visibility: hidden" in style_val:
+            tag.decompose()
+            continue
+    for tag in soup.find_all(attrs={"aria-hidden": "true"}):
+        tag.decompose()
+    for tag in soup.find_all(attrs={"hidden": True}):
+        tag.decompose()
+
+    # Attributes worth keeping for CSS selector generation
+    attrs_to_keep = {
+        "class", "id", "href", "src", "type", "name", "role",
+        "placeholder", "alt", "title", "value", "for",
+        "checked", "selected", "disabled", "readonly", "required",
+        "target", "rel", "action", "method", "enctype",
+        "cols", "rows", "maxlength", "minlength", "pattern",
+        "autocomplete", "autofocus", "multiple", "step", "min", "max",
+        "lang", "dir", "charset", "content",
+    }
+
+    def _keep_data_attrs(attr_name):
+        return (
+            attr_name in attrs_to_keep
+            or attr_name.startswith("data-")
+            or attr_name.startswith("aria-")
+        )
+
+    # Walk all elements and strip non-essential attributes
+    for tag in soup.find_all(True):
+        for attr in list(tag.attrs):
+            if not _keep_data_attrs(attr):
+                del tag[attr]
+
+    # Remove <head> entirely
+    head = soup.find("head")
+    if head:
+        head.decompose()
+
+    # Get body content
+    body = soup.find("body")
+    if not body:
+        # If no body tag, work with whatever we have
+        body = soup
+
+    # Remove empty container elements (no visible text, no child elements)
+    # Skip form elements and self-closing elements
+    _skip_tags = {"input", "img", "textarea", "select", "option", "button", "a"}
+    changed = True
+    while changed:
+        changed = False
+        for tag in body.find_all(True):
+            if tag.name in _skip_tags:
+                continue
+            if not tag.get_text(strip=True) and not list(tag.children):
+                tag.decompose()
+                changed = True
+
+    cleaned = str(body)
+    cleaned = minify_html(cleaned)
+    return cleaned
+
+
 def reduce_html(html, reduction):
     """
     Reduces the size of the HTML content based on the specified level of reduction.

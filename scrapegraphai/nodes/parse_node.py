@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 
 from ..helpers import default_filters
 from ..utils.split_text_into_chunks import split_text_into_chunks
+from ..utils.tokenizer import num_tokens_calculus
 from .base_node import BaseNode
 
 
@@ -58,6 +59,59 @@ class ParseNode(BaseNode):
 
         self.llm_model = node_config.get("llm_model")
         self.chunk_size = node_config.get("chunk_size")
+
+    @staticmethod
+    def _chunk_html_by_dom(html_text: str, chunk_size: int) -> List[str]:
+        """
+        Split HTML into chunks at DOM element boundaries so each chunk is a
+        valid HTML fragment. This preserves CSS selector structure for the LLM.
+        """
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_text, "html.parser")
+        body = soup.find("body") or soup
+        children = list(body.children)
+
+        if not children:
+            return [html_text] if html_text.strip() else []
+
+        effective_size = max(chunk_size - 200, int(chunk_size * 0.8))
+        chunks = []
+        current_parts = []
+        current_tokens = 0
+
+        for child in children:
+            if isinstance(child, str):
+                text = child.strip()
+                if not text:
+                    continue
+                child_html = text
+            else:
+                child_html = str(child)
+
+            child_tokens = num_tokens_calculus(child_html)
+
+            if child_tokens > effective_size:
+                # Single element larger than chunk size — include it as its own chunk
+                if current_parts:
+                    chunks.append("".join(current_parts))
+                    current_parts = []
+                    current_tokens = 0
+                chunks.append(child_html)
+                continue
+
+            if current_tokens + child_tokens > effective_size and current_parts:
+                chunks.append("".join(current_parts))
+                current_parts = []
+                current_tokens = 0
+
+            current_parts.append(child_html)
+            current_tokens += child_tokens
+
+        if current_parts:
+            chunks.append("".join(current_parts))
+
+        return chunks if chunks else [html_text]
 
     def execute(self, state: dict) -> dict:
         """
@@ -110,13 +164,17 @@ class ParseNode(BaseNode):
             chunk_size = min(chunk_size - 500, int(chunk_size * 0.8))
 
             if isinstance(docs_transformed, Document):
-                chunks = split_text_into_chunks(
-                    text=docs_transformed.page_content,
-                    chunk_size=chunk_size,
-                )
+                text = docs_transformed.page_content
             else:
+                text = docs_transformed
+
+            chunks = self._chunk_html_by_dom(text, chunk_size)
+
+            # If DOM chunking didn't split (single chunk that's too big),
+            # fall back to semchunk for a best-effort split
+            if len(chunks) == 1 and num_tokens_calculus(chunks[0]) > chunk_size:
                 chunks = split_text_into_chunks(
-                    text=docs_transformed, chunk_size=chunk_size
+                    text=text, chunk_size=chunk_size
                 )
 
         state.update({self.output[0]: chunks})

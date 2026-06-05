@@ -8,7 +8,10 @@ import threading
 import uuid
 from typing import Callable, Dict
 from urllib import request
-VERSION = importlib.metadata.version("scrapegraphai")
+try:
+    VERSION = importlib.metadata.version("scrapegraphai")
+except importlib.metadata.PackageNotFoundError:
+    VERSION = "0.0.0-dev"
 TRACK_URL = "https://sgai-oss-tracing.onrender.com/v1/telemetry"
 TIMEOUT = 2
 DEFAULT_CONFIG_LOCATION = os.path.expanduser("~/.scrapegraphai.conf")

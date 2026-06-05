@@ -2,6 +2,14 @@
 .DS_Store?
 ._*
 
+# GraphSpider — user test files & generated output
+test_new_architecture.py
+statcan_v2_generated_crawler.py
+statcan_v2_generated_crawler_results.json
+statcan_perfect_data.json
+scraped_results.json
+test
+
 # Byte-compiled / optimized / DLL files
 **/__pycache__/
 *.py[cod]

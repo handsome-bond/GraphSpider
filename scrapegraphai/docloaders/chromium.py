@@ -37,6 +37,7 @@ class ChromiumLoader(BaseLoader):
         browser_name: str = "chromium",  # default chromium
         retry_limit: int = 1,
         timeout: int = 60,
+        delay: float = 0,
         **kwargs: Any,
     ):
         """Initialize the loader with a list of URL paths.
@@ -72,6 +73,7 @@ class ChromiumLoader(BaseLoader):
         self.browser_name = kwargs.get("browser_name", browser_name)
         self.retry_limit = kwargs.get("retry_limit", retry_limit)
         self.timeout = kwargs.get("timeout", timeout)
+        self.delay = kwargs.get("delay", delay)
 
     async def scrape(self, url: str) -> str:
         if self.backend == "playwright":
@@ -362,11 +364,28 @@ class ChromiumLoader(BaseLoader):
                     context = await browser.new_context(
                         storage_state=self.storage_state,
                         ignore_https_errors=True,
+                        user_agent=(
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/131.0.0.0 Safari/537.36"
+                        ),
+                        viewport={"width": 1920, "height": 1080},
+                        locale="en-CA",
+                        timezone_id="America/Toronto",
+                        extra_http_headers={
+                            "Accept-Language": "en-CA,en;q=0.9,fr-CA;q=0.8,fr;q=0.7",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Accept-Encoding": "gzip, deflate, br",
+                            "DNT": "1",
+                            "Upgrade-Insecure-Requests": "1",
+                        },
                     )
                     await Malenia.apply_stealth(context)
                     page = await context.new_page()
                     await page.goto(url, wait_until="domcontentloaded")
                     await page.wait_for_load_state(self.load_state)
+                    if self.delay > 0:
+                        await asyncio.sleep(self.delay)
                     results = await page.content()
                     logger.info("Content scraped")
                     await browser.close()
@@ -423,6 +442,8 @@ class ChromiumLoader(BaseLoader):
                     )
                     page = await context.new_page()
                     await page.goto(url, wait_until="networkidle")
+                    if self.delay > 0:
+                        await asyncio.sleep(self.delay)
                     results = await page.content()
                     logger.info("Content scraped after JavaScript rendering")
                     return results
