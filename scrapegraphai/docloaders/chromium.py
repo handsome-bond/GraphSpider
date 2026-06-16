@@ -62,18 +62,25 @@ class ChromiumLoader(BaseLoader):
 
         dynamic_import(backend, message)
 
-        self.browser_config = kwargs
+        # Pop non-browser keys BEFORE storing in browser_config.
+        # browser_config gets passed to browser.launch(**browser_config),
+        # so anything Playwright doesn't understand will crash.
+        self.wait_for_user = kwargs.pop("wait_for_user", False)
+        self.storage_state_path = kwargs.pop("storage_state_path", "auth.json")
+        self.delay = kwargs.pop("delay", delay)
+        self.timeout = kwargs.pop("timeout", timeout)
+        self.retry_limit = kwargs.pop("retry_limit", retry_limit)
+        self.backend = kwargs.pop("backend", backend)
+        self.browser_name = kwargs.pop("browser_name", browser_name)
+        self.user_data_dir = kwargs.pop("user_data_dir", None)
+
+        self.browser_config = kwargs  # remaining keys go to browser.launch()
         self.headless = headless
         self.proxy = parse_or_search_proxy(proxy) if proxy else None
         self.urls = urls
         self.load_state = load_state
         self.requires_js_support = requires_js_support
         self.storage_state = storage_state
-        self.backend = kwargs.get("backend", backend)
-        self.browser_name = kwargs.get("browser_name", browser_name)
-        self.retry_limit = kwargs.get("retry_limit", retry_limit)
-        self.timeout = kwargs.get("timeout", timeout)
-        self.delay = kwargs.get("delay", delay)
 
     async def scrape(self, url: str) -> str:
         if self.backend == "playwright":
@@ -347,48 +354,98 @@ class ChromiumLoader(BaseLoader):
             try:
                 async with async_playwright() as p, async_timeout.timeout(self.timeout):
                     browser = None
-                    if browser_name == "chromium":
-                        browser = await p.chromium.launch(
+                    context = None
+
+                    # ── Persistent context (user_data_dir) ─────────
+                    # Keeps cookies/localStorage natively on disk — no
+                    # serialization issues like storage_state has.
+                    if self.user_data_dir:
+                        import os as _os
+                        _os.makedirs(self.user_data_dir, exist_ok=True)
+                        context = await p.chromium.launch_persistent_context(
+                            user_data_dir=self.user_data_dir,
                             headless=self.headless,
                             proxy=self.proxy,
+                            ignore_https_errors=True,
+                            user_agent=(
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/131.0.0.0 Safari/537.36"
+                            ),
+                            viewport={"width": 1920, "height": 1080},
+                            locale="en-CA",
+                            timezone_id="America/Toronto",
+                            extra_http_headers={
+                                "Accept-Language": "en-CA,en;q=0.9",
+                                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            },
+                            args=[
+                                "--disable-blink-features=AutomationControlled",
+                                "--no-sandbox",
+                            ],
                             **self.browser_config,
                         )
-                    elif browser_name == "firefox":
-                        browser = await p.firefox.launch(
-                            headless=self.headless,
-                            proxy=self.proxy,
-                            **self.browser_config,
-                        )
+                        page = await context.new_page()
                     else:
-                        raise ValueError(f"Invalid browser name: {browser_name}")
-                    context = await browser.new_context(
-                        storage_state=self.storage_state,
-                        ignore_https_errors=True,
-                        user_agent=(
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/131.0.0.0 Safari/537.36"
-                        ),
-                        viewport={"width": 1920, "height": 1080},
-                        locale="en-CA",
-                        timezone_id="America/Toronto",
-                        extra_http_headers={
-                            "Accept-Language": "en-CA,en;q=0.9,fr-CA;q=0.8,fr;q=0.7",
-                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                            "Accept-Encoding": "gzip, deflate, br",
-                            "DNT": "1",
-                            "Upgrade-Insecure-Requests": "1",
-                        },
-                    )
-                    await Malenia.apply_stealth(context)
-                    page = await context.new_page()
+                        # ── Normal (non-persistent) context ──────
+                        if browser_name == "chromium":
+                            browser = await p.chromium.launch(
+                                headless=self.headless,
+                                proxy=self.proxy,
+                                **self.browser_config,
+                            )
+                        elif browser_name == "firefox":
+                            browser = await p.firefox.launch(
+                                headless=self.headless,
+                                proxy=self.proxy,
+                                **self.browser_config,
+                            )
+                        else:
+                            raise ValueError(f"Invalid browser name: {browser_name}")
+                        context = await browser.new_context(
+                            storage_state=self.storage_state,
+                            ignore_https_errors=True,
+                            user_agent=(
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/131.0.0.0 Safari/537.36"
+                            ),
+                            viewport={"width": 1920, "height": 1080},
+                            locale="en-CA",
+                            timezone_id="America/Toronto",
+                            extra_http_headers={
+                                "Accept-Language": "en-CA,en;q=0.9",
+                                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            },
+                        )
+                        await Malenia.apply_stealth(context)
+                        page = await context.new_page()
+
                     await page.goto(url, wait_until="domcontentloaded")
                     await page.wait_for_load_state(self.load_state)
                     if self.delay > 0:
                         await asyncio.sleep(self.delay)
+
+                    # ── Interactive login ──────────────────────────
+                    if self.wait_for_user:
+                        print(f"\n{'='*60}")
+                        print(f"  Login required for: {url}")
+                        print(f"  Please log in manually in the browser window.")
+                        print(f"  After logging in, press ENTER in this terminal...")
+                        print(f"{'='*60}\n")
+                        try:
+                            input("  [Press ENTER when done] ")
+                        except (EOFError, KeyboardInterrupt):
+                            pass
+                        print(f"  Login done — continuing...\n")
+
                     results = await page.content()
                     logger.info("Content scraped")
-                    await browser.close()
+
+                    if browser:
+                        await browser.close()
+                    elif context:
+                        await context.close()
                     return results
             except (aiohttp.ClientError, asyncio.TimeoutError, Exception) as e:
                 attempt += 1

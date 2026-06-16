@@ -161,6 +161,7 @@ class GenerateScraperNode(BaseNode):
         self.library = library
         self.source = website
         self.model_token = node_config.get("model_token", 128000)
+        self.user_data_dir = node_config.get("user_data_dir")
 
         self.verbose = (
             False if node_config is None else node_config.get("verbose", False)
@@ -210,6 +211,8 @@ class GenerateScraperNode(BaseNode):
         context = self._build_context(doc, user_prompt)
 
         # Analyze the HTML to determine pagination type.
+        # _analyze_pagination() also stores self._pagination_mode / _pagination_style
+        # for sanitizers to conditionally enable/disable injections.
         pagination_instruction = self._analyze_pagination(context, effective_source)
 
         # Extract CSS class names / IDs from the HTML so the LLM knows
@@ -254,6 +257,8 @@ class GenerateScraperNode(BaseNode):
             ("skeleton_filter", self._sanitize_skeleton_nodes),
             ("proxy_injection", self._inject_proxy),
             ("save_to_file", self._inject_file_save),
+            ("wait_function_safety", self._sanitize_wait_function),
+            ("persistent_context", self._inject_persistent_context),
         ]:
             fixed = fix_fn(code)
             if fixed != code:
@@ -312,18 +317,27 @@ class GenerateScraperNode(BaseNode):
 
     def _sanitize_disabled_check(self, code: str) -> str:
         """
-        Bootstrap pagination puts the 'disabled' CLASS on the parent <li>,
-        not the disabled ATTRIBUTE on the <a> tag.  Add a parent-li check.
+        Add parent-<li> Bootstrap disabled check — ONLY for click-based or
+        complex pagination.  Simple URL-based sites (Douban-style) don't
+        need this: the Next link simply disappears on the last page.
         """
+        # Skip for simple URL-based pagination (no Bootstrap, no buttons)
+        if getattr(self, "_pagination_mode", "") == "URL-BASED":
+            return code
+
         if "classList.contains('disabled')" in code:
             return code
 
-        # Detect the variable name the LLM used for the "next" link element.
-        # Common names: next_link, next_button, next_btn, next_el
+        # Skip if code uses Locator API (complex structure, regex unsafe)
+        if "page.locator" in code or ".first" in code:
+            return code
+
         var_match = re.search(
             r'(\w+)\s*=\s*None\s*\n\s*for\s+sel\s+in\s+next_selectors', code
         )
-        var_name = var_match.group(1) if var_match else "next_link"
+        if not var_match:
+            return code  # can't find the pattern safely
+        var_name = var_match.group(1)
 
         parent_check = (
             f'            # Check parent <li> for Bootstrap disabled class\n'
@@ -339,6 +353,13 @@ class GenerateScraperNode(BaseNode):
             count=1,
             flags=re.MULTILINE,
         )
+
+        for pat in [
+            r'(if\s+disabled\s+or\s+aria_disabled\s*==\s*"true"\s*)',
+            r'(if\s+disabled\s+is\s+not\s+None\s+or\s+aria_disabled\s*==\s*"true"\s*)',
+        ]:
+            code = re.sub(pat, r'\1or is_parent_disabled ', code)
+
         return code
 
     # ── Sanitizer: filter empty skeleton-screen nodes ──
@@ -622,6 +643,50 @@ class GenerateScraperNode(BaseNode):
         separator = "\n\n<!-- HTML chunk -->\n\n"
         return separator.join(chunks[i] for i in all_indices)
 
+    # ── Sanitizer: make wait_for_function non-breaking ───────────────
+
+    def _sanitize_wait_function(self, code: str) -> str:
+        """
+        For URL-based pagination, page.goto() already provides the navigation
+        guarantee — the fingerprint wait_for_function is redundant and can
+        timeout, breaking the loop.  Make its except-block non-breaking.
+        For click-based pagination, the fingerprint wait IS needed.
+        """
+        # For simple URL-based sites, change except: break → except: pass
+        if getattr(self, "_pagination_mode", "") == "URL-BASED":
+            code = re.sub(
+                r'(wait_for_function\([^)]+\)[\s\S]*?except\s*(?:Exception)?\s*:\s*\n\s*)break',
+                r'\1pass  # timeout, page.goto already loaded new content',
+                code,
+            )
+        return code
+
+    # ── Sanitizer: persistent context fallback ───────────────────────
+
+    def _inject_persistent_context(self, code: str) -> str:
+        """
+        Emergency fallback: if the LLM ignored the persistent context
+        instruction in the prompt, do a best-effort replacement.
+        """
+        if not self.user_data_dir:
+            return code
+        if "launch_persistent_context" in code:
+            return code  # LLM got it right, no fallback needed
+        if "browser.launch" not in code:
+            return code  # already using persistent context or different API
+
+        # Best-effort: replace browser.launch → launch_persistent_context
+        # This is intentionally minimal to avoid breaking the script
+        code = re.sub(
+            r"browser\s*=\s*await\s+p\.chromium\.launch\(",
+            f'context = await p.chromium.launch_persistent_context(\n'
+            f'            user_data_dir="{self.user_data_dir}",\n'
+            f'            ',
+            code,
+        )
+        code = code.replace("await browser.close()", "await context.close()")
+        return code
+
     # ── Sanitizer: inject save-to-file logic ─────────────────────────
 
     def _inject_file_save(self, code: str) -> str:
@@ -747,6 +812,10 @@ class GenerateScraperNode(BaseNode):
             f"(url={has_url_pagination}, click={has_click_pagination}, "
             f"append={is_append_style})"
         )
+
+        # Store for sanitizers to conditionally enable/disable injections
+        self._pagination_mode = mode
+        self._pagination_style = style
 
         return instruction
 

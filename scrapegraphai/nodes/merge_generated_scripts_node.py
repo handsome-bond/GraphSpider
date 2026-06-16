@@ -68,13 +68,20 @@ class MergeGeneratedScriptsNode(BaseNode):
         scripts = input_data[1]
 
         # Short-circuit: a single script doesn't need merging.
-        # Passing it through the LLM will only re-introduce bugs that the
-        # GenerateScraperNode sanitizers already fixed.
+        # Passing it through the LLM will only re-introduce bugs.
+        single_script = None
         if isinstance(scripts, list) and len(scripts) == 1:
-            answer = scripts[0]
-            # Still apply URL correction as a safety net.
+            single_script = scripts[0]
+        elif isinstance(scripts, str):
+            single_script = scripts
+
+        if single_script:
+            answer = single_script
             for url in self.source_urls:
                 answer = correct_urls_in_code(answer, url)
+            self.logger.info(
+                f"{self.node_name}: single script — short-circuit, no LLM merge"
+            )
             state.update({self.output[0]: answer})
             return state
 

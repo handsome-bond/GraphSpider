@@ -60,6 +60,7 @@ class ScriptCreatorMultiGraph(AbstractGraph):
         self._output_format = config.get("output_format", "json")
         self._max_items = config.get("max_items", 50)
         self._library = config.get("library", "playwright")
+        self._user_data_dir = config.get("user_data_dir")
 
         # Data file: where the scraper saves results.  Default: derive from
         # output_file name.  e.g. "crawler.py" → "crawler_results.json"
@@ -119,10 +120,23 @@ class ScriptCreatorMultiGraph(AbstractGraph):
                 f'with indent=2 and ensure_ascii=False.'
             )
 
+        # Build persistent context rule if user_data_dir is set
+        persistent_ctx_rule = ""
+        if self._user_data_dir:
+            persistent_ctx_rule = (
+                f'0. BROWSER SETUP: Use launch_persistent_context with '
+                f'user_data_dir="{self._user_data_dir}" instead of '
+                f'browser.launch() + browser.new_context(). '
+                f'launch_persistent_context returns a context directly — '
+                f'NO separate browser variable. Use context.close() to close. '
+                f'Do NOT call browser.new_context() or browser.launch().\n'
+            )
+
         rules = (
             f'\n\n'
             f'Generate a complete Python {self._library} script.\n\n'
             f'CRITICAL RULES (NO HALLUCINATIONS):\n'
+            f'{persistent_ctx_rule}'
             f'1. EXACT URL: Use the exact target URL. DO NOT change it.\n'
             f'2. CSS CLASSES from HTML only: look at the HTML chunks to find '
             f'real class names. Never invent BEM-style classes.\n'

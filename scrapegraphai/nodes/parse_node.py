@@ -80,6 +80,11 @@ class ParseNode(BaseNode):
         current_parts = []
         current_tokens = 0
 
+        # Safety cap: process at most 500 direct children (prevents hangs
+        # on massive pages like zhihu login walls with huge DOM trees).
+        MAX_CHILDREN = 500
+        children = children[:MAX_CHILDREN]
+
         for child in children:
             if isinstance(child, str):
                 text = child.strip()

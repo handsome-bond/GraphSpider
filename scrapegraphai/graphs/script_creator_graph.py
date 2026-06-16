@@ -67,7 +67,8 @@ class ScriptCreatorGraph(AbstractGraph):
         # Merge user-provided loader_kwargs with top-level config params that
         # ChromiumLoader understands (delay, timeout, etc.).
         loader_kwargs = dict(self.config.get("loader_kwargs", {}))
-        for key in ("delay", "timeout", "requires_js_support", "load_state"):
+        for key in ("delay", "timeout", "requires_js_support", "load_state",
+                     "wait_for_user", "storage_state_path", "user_data_dir"):
             if key in self.config and key not in loader_kwargs:
                 loader_kwargs[key] = self.config[key]
 
@@ -100,6 +101,7 @@ class ScriptCreatorGraph(AbstractGraph):
                 "additional_info": self.config.get("additional_info"),
                 "schema": self.schema,
                 "model_token": self.model_token,
+                "user_data_dir": self.config.get("user_data_dir"),
             },
             library=self.library,
             website=self.source,
