@@ -49,5 +49,7 @@ agent = AgentLoop(
 
 result = agent.run()
 print(f"\nSuccess: {result.success} | Rounds: {result.total_rounds}")
+if result.error:
+    print(f"Error: {result.error}")
 if result.data:
     print(result.data[:500])
