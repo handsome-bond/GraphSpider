@@ -233,7 +233,10 @@ class ChromiumLoader(BaseLoader):
         import time
 
         from playwright.async_api import async_playwright
-        from undetected_playwright import Malenia
+        try:
+            from undetected_playwright import Malenia
+        except ImportError:
+            Malenia = None
 
         logger.info(f"Starting scraping with scrolling support for {url}...")
 
@@ -259,7 +262,8 @@ class ChromiumLoader(BaseLoader):
                     else:
                         raise ValueError(f"Invalid browser name: {browser_name}")
                     context = await browser.new_context()
-                    await Malenia.apply_stealth(context)
+                    if Malenia:
+                        await Malenia.apply_stealth(context)
                     page = await context.new_page()
                     await page.goto(url, wait_until="domcontentloaded")
                     await page.wait_for_load_state(self.load_state)
@@ -344,7 +348,10 @@ class ChromiumLoader(BaseLoader):
             ValueError: When an invalid browser name is provided
         """
         from playwright.async_api import async_playwright
-        from undetected_playwright import Malenia
+        try:
+            from undetected_playwright import Malenia
+        except ImportError:
+            Malenia = None
 
         logger.info(f"Starting scraping with {self.backend}...")
         results = ""
@@ -418,7 +425,8 @@ class ChromiumLoader(BaseLoader):
                                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                             },
                         )
-                        await Malenia.apply_stealth(context)
+                        if Malenia:
+                            await Malenia.apply_stealth(context)
                         page = await context.new_page()
 
                     await page.goto(url, wait_until="domcontentloaded")
