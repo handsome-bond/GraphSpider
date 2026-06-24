@@ -1,5 +1,7 @@
 # GraphSpider — Autonomous Web Scraper Agent
 
+[English](README.md) | [简体中文](README_zh.md)
+
 Give it a URL and tell it what you want. It opens a browser, analyzes the page, generates a scraper, executes it, and auto-fixes any errors — all without writing crawling code.
 
 ## Quick Start
