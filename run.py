@@ -3,7 +3,7 @@ GraphSpider — 3-line usage demo.
 
     $env:DEEPSEEK_API_KEY = "sk-..."   # Windows
     export DEEPSEEK_API_KEY="sk-..."   # macOS/Linux
-    python autonomous_test_entry.py
+    python run.py
 """
 
 import os
