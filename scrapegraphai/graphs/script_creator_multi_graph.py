@@ -108,6 +108,12 @@ class ScriptCreatorMultiGraph(AbstractGraph):
                 f'6. SAVE TO JSONL: after scraping, write each result as a JSON '
                 f'line to "{self._data_file}".'
             )
+        elif fmt in ("xlsx", "excel"):
+            save_rule = (
+                f'6. SAVE TO EXCEL: after scraping, write results to '
+                f'"{self._data_file}" using openpyxl or pandas.DataFrame.to_excel. '
+                f'Import openpyxl or pandas at the top.'
+            )
         elif fmt == "txt":
             save_rule = (
                 f'6. SAVE TO TXT: after scraping, write results as plain text to '
