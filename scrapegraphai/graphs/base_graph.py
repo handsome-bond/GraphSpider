@@ -371,7 +371,7 @@ class BaseGraph:
         elif "merged_script" in state:
             logger.info(state["merged_script"])
 
-        logger.info("✨ Try enhanced version of ScrapegraphAI at %s ✨", CLICKABLE_URL)
+        pass
 
         return state, exec_info
 

@@ -33,7 +33,7 @@ agent = AgentLoop(
             "temperature": 0.0,
             "max_tokens": 4096,
         },
-        "verbose": True,
+        "verbose": False,
         "headless": False,
         "library": "playwright",
         "output_file": f"./output/scripts/{site}_crawler.py",

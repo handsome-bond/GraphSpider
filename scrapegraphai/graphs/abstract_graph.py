@@ -210,14 +210,7 @@ class AbstractGraph(ABC):
                     llm_params["model"]
                 ]
             except KeyError:
-                logger.warning(
-                    "Max input tokens for model %s/%s not found, "
-                    "please specify the model_tokens parameter in the llm section of the graph configuration. "
-                    "Using default token size: 8192",
-                    llm_params["model_provider"],
-                    llm_params["model"],
-                )
-                self.model_token = 8192
+                self.model_token = 8192  # default for unknown models
         else:
             self.model_token = llm_params["model_tokens"]
 
