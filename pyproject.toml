@@ -41,6 +41,9 @@ requires-python = ">=3.11, <4.0"
 [project.scripts]
 graphspider = "scrapegraphai.cli:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["scrapegraphai"]
+
 [build-system]
-requires = ["hatchling==1.26.3"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
