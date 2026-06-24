@@ -246,19 +246,20 @@ class GenerateScraperNode(BaseNode):
         return state
 
     def _sanitize_script(self, code: str, source_url: str) -> str:
-        """Run all post-generation fixes on the LLM output."""
+        """
+        Run SAFE post-generation fixes.  These only do simple pattern
+        replacement — no regex code injection that can break indentation
+        or variable names.  Complex logic (pagination, disabled checks,
+        persistent context) is handled by prompt enrichment + the
+        smart reflector in the Agent.
+        """
         for fix_name, fix_fn in [
             ("url_correction", lambda c: self._correct_urls(c, source_url)),
             ("networkidle_removal", self._remove_networkidle),
-            ("count_pagination", self._sanitize_pagination),
             ("js_escape", self._sanitize_js_injection),
             ("env_var_hallucination", self._sanitize_env_var),
-            ("disabled_check", self._sanitize_disabled_check),
-            ("skeleton_filter", self._sanitize_skeleton_nodes),
             ("proxy_injection", self._inject_proxy),
             ("save_to_file", self._inject_file_save),
-            ("wait_function_safety", self._sanitize_wait_function),
-            ("persistent_context", self._inject_persistent_context),
         ]:
             fixed = fix_fn(code)
             if fixed != code:
@@ -317,26 +318,34 @@ class GenerateScraperNode(BaseNode):
 
     def _sanitize_disabled_check(self, code: str) -> str:
         """
-        Add parent-<li> Bootstrap disabled check — ONLY for click-based or
-        complex pagination.  Simple URL-based sites (Douban-style) don't
-        need this: the Next link simply disappears on the last page.
+        Add parent-<li> Bootstrap disabled check.
+        Only for click-based pagination; skip for URL-based and complex code.
         """
-        # Skip for simple URL-based pagination (no Bootstrap, no buttons)
+        # Skip for simple URL-based sites
         if getattr(self, "_pagination_mode", "") == "URL-BASED":
             return code
-
+        # Skip if already fixed or using complex APIs
         if "classList.contains('disabled')" in code:
             return code
-
-        # Skip if code uses Locator API (complex structure, regex unsafe)
-        if "page.locator" in code or ".first" in code:
+        if "page.locator" in code or ".first" in code or "launch_persistent" in code:
+            return code
+        # Only inject if we can safely find both the disabled assignment
+        # AND the break condition, to avoid indentation corruption
+        has_disabled_assign = bool(re.search(
+            r'^[ \t]+disabled = await \w+\.get_attribute\("disabled"\)',
+            code, re.MULTILINE
+        ))
+        has_break_cond = bool(re.search(
+            r'if\s+disabled\s+', code
+        ))
+        if not (has_disabled_assign and has_break_cond):
             return code
 
         var_match = re.search(
             r'(\w+)\s*=\s*None\s*\n\s*for\s+sel\s+in\s+next_selectors', code
         )
         if not var_match:
-            return code  # can't find the pattern safely
+            return code
         var_name = var_match.group(1)
 
         parent_check = (
@@ -367,45 +376,41 @@ class GenerateScraperNode(BaseNode):
     def _sanitize_skeleton_nodes(self, code: str) -> str:
         """
         Add a guard that skips empty/skeleton-screen placeholders.
-        Only targets data-extraction loops — NOT pagination selector loops.
+        Only targets data-extraction loops — uses the ACTUAL loop variable name.
         """
         if 'skip empty' in code.lower() or 'skip hidden' in code.lower():
             return code
 
-        def _insert_guard(match):
-            full_match = match.group(0)
-            leading = match.group(1)
-            indent1 = leading + "    "
-            indent2 = indent1 + "    "
-            return (
-                f"{full_match}\n"
-                f"{indent1}# Skip hidden skeleton-screen / empty placeholder nodes\n"
-                f"{indent1}if not (await item.inner_text()).strip():\n"
-                f"{indent2}continue\n"
-            )
-
-        # Only match item-extraction loops, NOT pagination-selector loops.
-        # Pagination loops use words like "selector", "sel", "next".
         _PAGINATION_LOOP_WORDS = frozenset({
             "selector", "selectors", "sel", "next_sel",
         })
-        for pattern in [
-            r'([ \t]*)(for\s+(\w+)\s+in\s+(\w+)\s*:)',
-        ]:
-            for m in re.finditer(pattern, code):
-                loop_var = m.group(3).lower()
-                loop_iter = m.group(4).lower()
-                if loop_var in _PAGINATION_LOOP_WORDS:
-                    continue
-                if loop_iter in _PAGINATION_LOOP_WORDS:
-                    continue
-                # Found a data-extraction loop — inject the guard
-                code = code.replace(
-                    m.group(0),
-                    _insert_guard(m),
-                    1,  # only first match to avoid double-injection
-                )
-                return code
+
+        for m in re.finditer(
+            r'([ \t]*)(for\s+(\w+)\s+in\s+(\w+)\s*:)', code
+        ):
+            loop_var = m.group(3)  # e.g. "item", "hot_item", "row"
+            loop_iter = m.group(4).lower()
+
+            if loop_var.lower() in _PAGINATION_LOOP_WORDS:
+                continue
+            if loop_iter in _PAGINATION_LOOP_WORDS:
+                continue
+
+            # Found a data-extraction loop — inject the guard
+            leading = m.group(1)
+            indent1 = leading + "    "
+            indent2 = indent1 + "    "
+
+            guard = (
+                f"{m.group(0)}\n"
+                f"{indent1}# Skip hidden skeleton-screen / empty placeholder nodes\n"
+                f"{indent1}if not (await {loop_var}.inner_text()).strip():\n"
+                f"{indent2}continue\n"
+            )
+
+            code = code.replace(m.group(0), guard, 1)
+            return code
+
         return code
 
     # ── Post-generation script sanitizers ───────────────────────────
@@ -519,20 +524,16 @@ class GenerateScraperNode(BaseNode):
         proxy_setup = (
             '    PROXY = os.environ.get("HTTPS_PROXY", "http://127.0.0.1:7890")\n'
         )
-        # Insert PROXY line before browser = await p.chromium.launch
         code = re.sub(
             r'(    browser = await p\.chromium\.launch\()',
             proxy_setup + r'\g<1>',
             code,
         )
-
-        # Add proxy= parameter if headless=False is present (first arg after launch()
         code = re.sub(
             r'(launch\(\s*\n\s*headless=False,)',
-            r'\g<1>\n            proxy={"server": PROXY},',
+            r'\g<1>\n            proxy={"server": PROXY} if PROXY else None,',
             code,
         )
-
         self.logger.info("_inject_proxy: proxy support injected into script")
         return code
 

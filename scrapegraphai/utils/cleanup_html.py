@@ -153,7 +153,9 @@ def clean_html_for_script_creator(html_content: str) -> str:
 
     # Remove hidden elements (display:none / visibility:hidden / aria-hidden)
     for tag in soup.find_all(style=True):
-        style_val = tag["style"].lower()
+        if tag.attrs is None:
+            continue
+        style_val = (tag.attrs.get("style") or "").lower()
         if "display:none" in style_val or "display: none" in style_val:
             tag.decompose()
             continue

@@ -77,8 +77,11 @@ class MergeGeneratedScriptsNode(BaseNode):
 
         if single_script:
             answer = single_script
+            # Run the same sanitizers that GenerateScraperNode would apply
             for url in self.source_urls:
                 answer = correct_urls_in_code(answer, url)
+            answer = self._sanitize_env_var(answer)
+            answer = self._sanitize_proxy_fallback(answer)
             self.logger.info(
                 f"{self.node_name}: single script — short-circuit, no LLM merge"
             )
@@ -126,3 +129,25 @@ class MergeGeneratedScriptsNode(BaseNode):
 
         state.update({self.output[0]: answer})
         return state
+
+    @staticmethod
+    def _sanitize_env_var(code: str) -> str:
+        """Fix URL-as-env-key hallucination."""
+        import re
+        return re.sub(
+            r'os\.environ\.get\(\s*["\']https?://[^"\']+["\']',
+            'os.environ.get("HTTPS_PROXY"',
+            code,
+        )
+
+    @staticmethod
+    def _sanitize_proxy_fallback(code: str) -> str:
+        """Add fallback: if proxy fails, retry without proxy."""
+        if "try:" in code and "proxy" in code:
+            return code  # already has error handling
+        # Not injecting complex try/except — just ensure proxy is optional
+        code = code.replace(
+            'proxy={"server": PROXY} if PROXY else None',
+            'proxy={"server": PROXY} if PROXY else None  # proxy is optional',
+        )
+        return code

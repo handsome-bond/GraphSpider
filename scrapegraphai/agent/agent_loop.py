@@ -91,12 +91,17 @@ class AgentLoop:
         try:
             final_state = graph.invoke(initial_state)
         except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            # Log the full traceback for debugging
+            if self.config.get("verbose"):
+                print(f"\n[AgentLoop] Error during execution:\n{tb}")
             return AgentResult(
                 success=False,
                 script=initial_state.get("script", ""),
                 total_rounds=initial_state.get("retry_count", 0),
                 history=initial_state.get("round_history", []),
-                error=f"Agent execution failed: {exc}",
+                error=f"{exc}\n\n{tb[-500:]}",  # last 500 chars of traceback
             )
 
         return AgentResult(
